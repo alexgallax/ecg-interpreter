@@ -34,15 +34,19 @@ src/ecg_interpreter/
 - `analyze_heart_rate` — классификация ЧСС;
 - `interpret_ecg` — интерпретация измерения ЭКГ по правилам;
 - `average_heart_rate` — расчёт средней ЧСС по списку измерений;
-- `find_critical` — поиск измерений, требующих срочного внимания.
+- `heart_rate_range` — поиск минимальной и максимальной ЧСС;
+- `filter_by_urgency` — фильтрация измерений по срочности;
+- `filter_by_diagnosis` — фильтрация измерений по диагнозу;
+- `risk_score` — расчёт учебного показателя риска;
+- `validate_dataset`, `validate_data`, `validate_heart_rate` — валидация входных данных.
 
-Все изменения и новые задания должны быть связаны с этими функциями и их тестированием.
+Все изменения и новые задания должны быть связаны с этими функциями, моделями, константами и их тестированием. Функции `find_critical` нет: срочные измерения отбираются через `filter_by_urgency(dataset, Urgency.URGENT)`.
 
 ---
 
 ## Технологический стек
 
-- Язык: **Python 3.10+**
+- Язык: **Python**, в `pyproject.toml` заявлено **3.10+**; текущий код проверен на **3.14.5**
 - Тестирование: **pytest**
 - Типы данных: `dataclass`, `Enum`
 - Организация проекта: `src`-layout
@@ -50,42 +54,55 @@ src/ecg_interpreter/
 
 Не добавлять новые внешние зависимости без явной учебной необходимости.
 
+Известное ограничение: модели используют Enum в аннотациях до объявления этих Enum, без `from __future__ import annotations`. На Python 3.10–3.13 это приводит к `NameError` при импорте. Пока это не исправлено и не проверено тестами совместимости, для запуска текущего кода использовать Python 3.14.
+
 ---
 
 ## Структура проекта
 
-Ожидаемая структура репозитория:
+Текущая структура репозитория (без служебных файлов окружения):
 
 ```text
 .
 ├── src/
 │   └── ecg_interpreter/
-│       ├── ecg.py
+│       ├── __init__.py
+│       ├── consts/
+│       │   ├── __init__.py
+│       │   └── consts.py
+│       ├── ecg/
+│       │   ├── __init__.py
+│       │   ├── heart_rate_analyser.py
+│       │   ├── interpreter.py
+│       │   ├── risk_analyser.py
+│       │   └── validators.py
 │       └── models/
+│           ├── __init__.py
 │           ├── ecg_data.py
 │           └── interpretation.py
-├── tests/
-│   ├── conftest.py
-│   └── test_ecg.py
 ├── pyproject.toml
+├── requirements.txt
 ├── AGENTS.md
 └── README.md
 ```
 
-Допустимо наличие файлов:
+Импортировать из пакета `ecg_interpreter`, без префикса `src`. Файлы `__init__.py` сейчас пустые и не реэкспортируют функции. Примеры корректных импортов:
 
-```text
-src/ecg_interpreter/__init__.py
-src/ecg_interpreter/models/__init__.py
+```python
+from ecg_interpreter.ecg.heart_rate_analyser import analyze_heart_rate
+from ecg_interpreter.ecg.interpreter import interpret_ecg
+from ecg_interpreter.models.ecg_data import ECGData
 ```
 
-если это требуется для корректной работы импортов.
+Общие валидаторы импортировать напрямую из `ecg_interpreter.ecg.validators`, а не через `interpreter`: это предотвращает циклические зависимости.
 
 ---
 
 ## Запуск тестов
 
 Тесты должны запускаться из корня проекта.
+
+Следующие команды предполагают активированное виртуальное окружение с установленным test extra (`python -m pip install -e ".[test]"`). На Linux/macOS без активации можно использовать `.venv/bin/python -m pytest -v`; на Windows — `.venv\Scripts\python.exe -m pytest -v`.
 
 Базовый запуск:
 
@@ -117,10 +134,13 @@ python -m pytest tests/test_ecg.py -v
 python -m pytest -k "analyze_heart_rate" -v
 python -m pytest -k "interpret_ecg" -v
 python -m pytest -k "average_heart_rate" -v
-python -m pytest -k "find_critical" -v
+python -m pytest -k "heart_rate_range" -v
+python -m pytest -k "filter_by_urgency" -v
+python -m pytest -k "filter_by_diagnosis" -v
+python -m pytest -k "risk_score" -v
 ```
 
-Если импорты вида `src.ecg_interpreter...` не работают, проверить:
+Если импорты вида `ecg_interpreter...` не работают, проверить:
 
 1. наличие корректного `pyproject.toml`;
 2. запуск из корня проекта;
@@ -131,7 +151,7 @@ python -m pytest -k "find_critical" -v
 ```toml
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["."]
+pythonpath = ["src"]
 ```
 
 ---
@@ -156,6 +176,8 @@ q_wave: bool
 - `q_wave` — это `bool`, а не отдельный `Enum`;
 - `heart_rate` — числовое значение ЧСС;
 - `rhythm` и `st_segment` — перечисления.
+
+`ECGData` и `Interpretation` — изменяемые `dataclass` без значений по умолчанию и без автоматической валидации типов. `Interpretation` содержит поля `diagnosis: Diagnosis` и `urgency: Urgency`. Все четыре Enum наследуются от `str` и `Enum`.
 
 ---
 
@@ -211,7 +233,7 @@ URGENT = "urgent"
 
 ### Приоритет правил
 
-1. Если `STSegment.ELEVATION` и `q_wave is True`:
+1. Если `STSegment.ELEVATION` и `q_wave` истинно:
 
    ```text
    Diagnosis.INFARCTION
@@ -239,7 +261,7 @@ URGENT = "urgent"
    Urgency.PLANNED
    ```
 
-5. Если `q_wave is True`:
+5. Если `q_wave` истинно:
 
    ```text
    Diagnosis.PREVIOUS_INFARCTION
@@ -270,6 +292,9 @@ heart_rate > 100     -> Diagnosis.TACHYCARDIA
 None      -> ValueError
 < 0       -> ValueError
 > 300     -> ValueError
+nan       -> ValueError
+inf       -> ValueError
+-inf      -> ValueError
 ```
 
 Граничные значения:
@@ -283,6 +308,42 @@ None      -> ValueError
 | `100.1`   | `TACHYCARDIA`     |
 | `300`     | `TACHYCARDIA`     |
 | `300.001` | `ValueError`      |
+
+---
+
+## Валидация, агрегаты и фильтры
+
+- `validate_dataset` отклоняет пустой набор и другие falsy-входы, включая `None`; элементы и тип контейнера не проверяет.
+- `validate_data` отклоняет falsy-входы, включая `None`; тип объекта и поля не проверяет.
+- `validate_heart_rate` последовательно проверяет `None`, отрицательное значение, превышение `300`, затем `nan`/`inf`. Поэтому `-inf` получает сообщение об отрицательной ЧСС, `inf` — о физиологически невозможной, а `nan` — о конечном числе.
+- Валидаторы при успехе возвращают `None`.
+- `average_heart_rate` проверяет набор через `validate_dataset`, затем вычисляет `sum(d.heart_rate for d in dataset) / len(dataset)`. ЧСС отдельных измерений не валидируется.
+- `heart_rate_range` возвращает `(min(heart_rates), max(heart_rates))` без вызова валидаторов. Пустой набор вызывает нативный `ValueError` из `min`; `None` вместо набора вызывает `TypeError`. При `nan` результат может зависеть от порядка элементов.
+- `filter_by_urgency` и `filter_by_diagnosis` проверяют набор и отбирают измерения по результату `interpret_ecg`. Пустой набор вызывает `ValueError`, отсутствие совпадений в непустом наборе возвращает `[]`.
+- Фильтры возвращают новый список исходных объектов, сохраняют порядок и повторы. Критерий фильтра не валидируется; неизвестный критерий даёт `[]` при корректных измерениях. Ошибки интерпретации элементов распространяются вызывающему коду.
+- Функции приложения не изменяют входные измерения и наборы.
+
+## Расчёт риска: текущее поведение
+
+`risk_score` сначала вызывает `validate_data` и `validate_heart_rate`, поэтому проверяет ЧСС даже при ранних диагностических правилах. Затем получает интерпретацию, компонент ЧСС и коэффициент диагноза из таблиц в `consts/consts.py`.
+
+Фактическая формула:
+
+```text
+base_by_urgency * heart_rate_component * multiplier_by_diagnosis
+```
+
+База: `NONE=0.0`, `PLANNED=25.0`, `URGENT=80.0`. При нормальной ЧСС компонент равен `0.0`, а при бради-/тахикардии значения `5.0` из таблицы заменяются на `0.2`.
+
+Множители: `NORMAL=1.0`, `BRADYCARDIA=1.2`, `TACHYCARDIA=1.2`, `ARRHYTHMIA=1.4`, `PREVIOUS_INFARCTION=1.45`, `ISCHEMIA=1.5`, `SUSPECTED_INFARCTION=1.8`, `INFARCTION=2.0`.
+
+Известное несоответствие: docstring обещает сложение базы и компонента ЧСС, но код их перемножает. При нормальной ЧСС риск равен нулю даже для инфаркта. Не исправлять формулу молча: изменение требует отдельного решения, тестов и обновления документации. Тесты текущего поведения должны явно отличаться от требований к предполагаемой исправленной формуле.
+
+## Текущее покрытие тестами
+
+В `tests/test_ecg.py` один параметризованный тест проверяет три случая `interpret_ecg`: норму, брадикардию и тахикардию, включая срочность. Границы, исключения, приоритеты, агрегаты, фильтры и риск пока не покрыты.
+
+В `tests/conftest.py` есть фикстуры `normal_reading`, `infarction_reading`, `bradycardia_reading`, `tachycardia_reading`, `arrhythmia_reading`, `ischemia_reading`. Фабрика и наборы измерений ниже описаны как рекомендации, а не как существующие фикстуры.
 
 ---
 
@@ -368,7 +429,7 @@ def make_reading():
 
 - граничных значений ЧСС;
 - таблицы решений;
-- набораов данных;
+- наборов данных;
 - проверки исключений;
 - проверки разных фикстур через имена.
 
@@ -411,7 +472,7 @@ def test_average_heart_rate_empty_dataset_raises_error():
     ...
 
 
-def test_find_critical_returns_only_urgent_readings():
+def test_filter_by_urgency_returns_only_urgent_readings():
     ...
 ```
 
@@ -483,7 +544,7 @@ assert average_heart_rate(dataset) == pytest.approx(83.75)
 Для исключений использовать:
 
 ```python
-with pytest.raises(ValueError, match="Список изменений пуст"):
+with pytest.raises(ValueError, match="Список измерений не может быть пустым"):
     average_heart_rate([])
 ```
 
@@ -509,16 +570,17 @@ with pytest.raises(ValueError, match="физиологически невозм�
 
 ## Работа с сообщениями об ошибках
 
-Текущие сообщения об ошибках являются частью контракта, который проверяется тестами.
+Текущие сообщения об ошибках являются частью контракта; новые тесты исключений должны их проверять.
 
 Например:
 
 ```python
 "Данные ЭКГ не могут быть пустыми"
-"Список изменений пуст"
+"Список измерений не может быть пустым"
 "Значение ЧСС не может быть пустыми"
 "Значение ЧСС не может быть отрицательным"
 "Значение ЧСС физиологически невозможно"
+"Значение ЧСС должно быть конечным числом"
 ```
 
 Если агент меняет текст сообщения, он обязан обновить все тесты, которые используют `match=...`.
@@ -536,6 +598,8 @@ q_wave: bool
 ```
 
 Не следует без необходимости заменять `bool` на `Enum`.
+
+Реализация проверяет truthiness `q_wave`, а не `q_wave is True`. Тип поля автоматически не проверяется; в обычных предметных сценариях использовать `True` и `False`.
 
 ---
 
@@ -675,9 +739,22 @@ reading = cast(ECGData, request.getfixturevalue("normal_reading"))
 
 ---
 
-## Требования к `test_ecg.py`
+## Организация тестовых файлов
 
-В файле тестов рекомендуется группировать тесты по функциям:
+При написании автотестов рекомендуется разделение по модулям приложения:
+
+```text
+tests/
+├── conftest.py
+├── test_validators.py
+├── test_heart_rate_analyser.py
+├── test_interpreter.py
+├── test_risk_analyser.py
+├── test_models.py
+└── test_consts.py
+```
+
+Внутри файла можно группировать тесты по функциям:
 
 ```python
 class TestAnalyzeHeartRate:
@@ -692,7 +769,19 @@ class TestAverageHeartRate:
     ...
 
 
-class TestFindCritical:
+class TestHeartRateRange:
+    ...
+
+
+class TestFilterByUrgency:
+    ...
+
+
+class TestFilterByDiagnosis:
+    ...
+
+
+class TestRiskScore:
     ...
 ```
 
@@ -709,7 +798,7 @@ class TestFindCritical:
 ```text
 lab/unit-tests
 lab/pytest-fixtures
-feature/add-find-critical-tests
+feature/add-filter-by-urgency-tests
 fix/heart-rate-boundary
 docs/update-agents-md
 ```
