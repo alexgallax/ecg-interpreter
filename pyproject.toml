@@ -1,0 +1,59 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+
+[project]
+name = "ecg-interpreter"
+version = "0.1.0"
+description = "Учебный проект по автоматизации и тестированию интерпретации ЭКГ"
+readme = "README.md"
+requires-python = ">=3.10"
+
+# У проекта нет обязательных runtime-зависимостей
+dependencies = []
+
+# Необязательные зависимости для тестов
+# Установка:
+#   pip install -e ".[test]"
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0",
+]
+
+
+# ---------- Настройка пакета ----------
+
+# Пакет находится в папке src/
+# То есть:
+#   src/ecg_interpreter
+# должен устанавливаться как:
+#   ecg_interpreter
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["ecg_interpreter*"]
+
+
+# ---------- Настройка pytest ----------
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+
+# Где лежат тесты
+testpaths = [
+    "tests",
+]
+
+# Добавляем папку src в пути импорта,
+# чтобы тесты могли делать:
+#   from ecg_interpreter.ecg import interpret_ecg
+# даже если пакет ещё не установлен через pip
+pythonpath = [
+    "src",
+]
+
+# Удобные флаги запуска
+addopts = """
+    -ra
+    --strict-markers
+"""
