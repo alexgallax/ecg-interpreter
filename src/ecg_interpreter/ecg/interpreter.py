@@ -58,3 +58,4 @@ def filter_by_diagnosis(dataset: list[ECGData], diagnosis: Diagnosis) -> list[EC
     """
     validate_dataset(dataset)
     return [d for d in dataset if interpret_ecg(d).diagnosis == diagnosis]
+
